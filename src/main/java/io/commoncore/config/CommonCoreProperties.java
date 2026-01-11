@@ -18,6 +18,8 @@ public class CommonCoreProperties {
     private HttpClient httpClient = new HttpClient();
     private Pagination pagination = new Pagination();
     private Audit audit = new Audit();
+    private Logging logging = new Logging();
+    private Monitoring monitoring = new Monitoring();
 
     @Data
     public static class Interceptor {
@@ -375,5 +377,111 @@ public class CommonCoreProperties {
          * Default: 90
          */
         private int retentionDays = 90;
+    }
+
+    @Data
+    public static class Logging {
+        /**
+         * Enable/disable structured logging (JSON format)
+         * Default: false
+         */
+        private boolean structuredLogging = false;
+
+        /**
+         * Enable/disable request body logging
+         * Default: false
+         */
+        private boolean logRequestBody = false;
+
+        /**
+         * Enable/disable response body logging
+         * Default: false
+         */
+        private boolean logResponseBody = false;
+
+        /**
+         * Enable/disable header logging
+         * Default: false
+         */
+        private boolean logHeaders = false;
+
+        /**
+         * Maximum body size to log (in bytes)
+         * Default: 10000 (10KB)
+         */
+        private int maxBodySize = 10000;
+
+        /**
+         * Sensitive fields to mask (e.g., password, token, creditCard)
+         * Default: password, token, authorization, creditCard, cvv, ssn
+         */
+        private List<String> sensitiveFields = new ArrayList<>(List.of(
+                "password", "token", "authorization", "creditCard", "cvv", "ssn", "secret"
+        ));
+
+        /**
+         * Mask pattern for sensitive data
+         * Default: ****
+         */
+        private String maskPattern = "****";
+
+        /**
+         * Content types to log body for
+         * Default: application/json, application/xml
+         */
+        private List<String> loggableContentTypes = new ArrayList<>(List.of(
+                "application/json", "application/xml"
+        ));
+    }
+
+    @Data
+    public static class Monitoring {
+        /**
+         * Enable/disable performance monitoring
+         * Default: true
+         */
+        private boolean enabled = true;
+
+        /**
+         * Enable/disable memory monitoring
+         * Default: true
+         */
+        private boolean monitorMemory = true;
+
+        /**
+         * Enable/disable CPU monitoring
+         * Default: true
+         */
+        private boolean monitorCpu = true;
+
+        /**
+         * Enable/disable database query time monitoring
+         * Default: true
+         */
+        private boolean monitorDbQueryTime = true;
+
+        /**
+         * Slow query threshold in milliseconds
+         * Default: 1000 (1 second)
+         */
+        private long slowQueryThreshold = 1000;
+
+        /**
+         * Enable/disable Micrometer metrics
+         * Default: true
+         */
+        private boolean enableMetrics = true;
+
+        /**
+         * Enable/disable Prometheus export
+         * Default: false
+         */
+        private boolean enablePrometheus = false;
+
+        /**
+         * Custom metrics to track
+         * Default: empty
+         */
+        private List<String> customMetrics = new ArrayList<>();
     }
 }

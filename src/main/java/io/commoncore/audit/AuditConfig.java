@@ -1,6 +1,5 @@
 package io.commoncore.audit;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.hibernate.event.service.spi.EventListenerRegistry;
 import org.hibernate.event.spi.EventType;
@@ -13,6 +12,7 @@ import jakarta.persistence.EntityManagerFactory;
 
 /**
  * Configuration for Audit Logging
+ * Note: ObjectMapper bean is provided by Spring Boot's JacksonAutoConfiguration
  */
 @Configuration
 @RequiredArgsConstructor
@@ -20,14 +20,6 @@ import jakarta.persistence.EntityManagerFactory;
 public class AuditConfig {
 
     private final AuditService auditService;
-
-    /**
-     * ObjectMapper bean for JSON serialization
-     */
-    @Bean
-    public ObjectMapper objectMapper() {
-        return new ObjectMapper();
-    }
 
     /**
      * Register Hibernate event listeners for audit

@@ -1,6 +1,8 @@
 package io.commoncore.config;
 
+import io.commoncore.interceptor.AdvancedLoggingInterceptor;
 import io.commoncore.interceptor.LoggingInterceptor;
+import io.commoncore.interceptor.PerformanceMonitoringInterceptor;
 import io.commoncore.interceptor.RateLimitingInterceptor;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
@@ -21,13 +23,19 @@ public class CommonCoreAutoConfiguration implements WebMvcConfigurer {
 
     private final LoggingInterceptor loggingInterceptor;
     private final RateLimitingInterceptor rateLimitingInterceptor;
+    private final AdvancedLoggingInterceptor advancedLoggingInterceptor;
+    private final PerformanceMonitoringInterceptor performanceMonitoringInterceptor;
     private final CommonCoreProperties properties;
 
     public CommonCoreAutoConfiguration(LoggingInterceptor loggingInterceptor,
                                       RateLimitingInterceptor rateLimitingInterceptor,
+                                      AdvancedLoggingInterceptor advancedLoggingInterceptor,
+                                      PerformanceMonitoringInterceptor performanceMonitoringInterceptor,
                                       CommonCoreProperties properties) {
         this.loggingInterceptor = loggingInterceptor;
         this.rateLimitingInterceptor = rateLimitingInterceptor;
+        this.advancedLoggingInterceptor = advancedLoggingInterceptor;
+        this.performanceMonitoringInterceptor = performanceMonitoringInterceptor;
         this.properties = properties;
     }
 
@@ -52,20 +60,60 @@ public class CommonCoreAutoConfiguration implements WebMvcConfigurer {
             }
         }
 
-        // Logging Interceptor
-        if (properties.getInterceptor().isEnabled()) {
-            var loggingRegistration = registry.addInterceptor(loggingInterceptor);
+        // Advanced Logging Interceptor (if enabled)
+        if (properties.getLogging().isStructuredLogging() || 
+            properties.getLogging().isLogRequestBody() || 
+            properties.getLogging().isLogResponseBody()) {
+            var advancedLoggingRegistration = registry.addInterceptor(advancedLoggingInterceptor);
             
             // Include patterns
             if (!properties.getInterceptor().getIncludePatterns().isEmpty()) {
-                loggingRegistration.addPathPatterns(
+                advancedLoggingRegistration.addPathPatterns(
                     properties.getInterceptor().getIncludePatterns().toArray(new String[0])
                 );
             }
             
             // Exclude patterns
             if (!properties.getInterceptor().getExcludePatterns().isEmpty()) {
-                loggingRegistration.excludePathPatterns(
+                advancedLoggingRegistration.excludePathPatterns(
+                    properties.getInterceptor().getExcludePatterns().toArray(new String[0])
+                );
+            }
+        } else {
+            // Standard Logging Interceptor
+            if (properties.getInterceptor().isEnabled()) {
+                var loggingRegistration = registry.addInterceptor(loggingInterceptor);
+                
+                // Include patterns
+                if (!properties.getInterceptor().getIncludePatterns().isEmpty()) {
+                    loggingRegistration.addPathPatterns(
+                        properties.getInterceptor().getIncludePatterns().toArray(new String[0])
+                    );
+                }
+                
+                // Exclude patterns
+                if (!properties.getInterceptor().getExcludePatterns().isEmpty()) {
+                    loggingRegistration.excludePathPatterns(
+                        properties.getInterceptor().getExcludePatterns().toArray(new String[0])
+                    );
+                }
+            }
+        }
+
+        // Performance Monitoring Interceptor
+        if (properties.getMonitoring().isEnabled()) {
+            var performanceRegistration = registry.addInterceptor(performanceMonitoringInterceptor);
+            
+            // Include patterns
+            if (!properties.getInterceptor().getIncludePatterns().isEmpty()) {
+                performanceRegistration.addPathPatterns(
+                    properties.getInterceptor().getIncludePatterns().toArray(new String[0])
+                );
+            }
+            
+            // Exclude patterns
+            if (!properties.getInterceptor().getExcludePatterns().isEmpty()) {
+                performanceRegistration.excludePathPatterns(
                     properties.getInterceptor().getExcludePatterns().toArray(new String[0])
                 );
             }

@@ -19,6 +19,8 @@ CommonCore, Spring Boot projelerinde kullanılabilecek ortak bileşenleri içere
 - ✅ **Spring Actuator**: Monitoring ve health check desteği
 - ✅ **HTTP Client**: Farklı servislere HTTP request atmak için hazır utility
 - ✅ **Pagination & Sorting**: Sayfalama ve sıralama mimarisi
+- ✅ **Base Audit Fields**: Ortak audit alanları için embeddable entity (`BaseAuditFields`)
+- ✅ **Audit Logging**: Entity değişiklik takibi ve kullanıcı aksiyon loglama
 - ✅ **Auto-Configuration**: Otomatik yapılandırma
 
 ## Kurulum
@@ -226,6 +228,41 @@ CommonCore/
     └── CommonCoreAutoConfiguration.java  # Auto-configuration
 ```
 
+## Base Audit Fields Kullanımı
+
+Tüm entity'lerde ortak audit alanlarını (`createdAt`, `updatedAt`, `createdBy`, `updatedBy`) tek bir embeddable sınıf ile kullanabilirsiniz:
+
+```java
+import io.commoncore.domain.BaseAuditFields;
+import jakarta.persistence.*;
+
+@Entity
+public class Product {
+    
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    
+    private String name;
+    
+    // Tek satırda tüm audit alanları!
+    @Embedded
+    private BaseAuditFields auditFields = new BaseAuditFields();
+    
+    @PrePersist
+    protected void onCreate() {
+        auditFields.initialize();
+    }
+    
+    @PreUpdate
+    protected void onUpdate() {
+        auditFields.update();
+    }
+}
+```
+
+Detaylı kullanım için `COMPLETE_DOCUMENTATION.md` dosyasına bakın.
+
 ## Örnek Proje Yapısı
 
 Yeni projenizde şu şekilde kullanabilirsiniz:
@@ -235,6 +272,8 @@ MyNewProject/
 ├── src/main/java/com/myproject/
 │   ├── controller/
 │   │   └── MyController.java     # CustomResponse kullanır
+│   ├── domain/
+│   │   └── Product.java          # BaseAuditFields kullanır
 │   ├── exception/
 │   │   ├── MyEntityNotFoundException.java  # BaseNotFoundException'dan extend
 │   │   └── MyEntityValidationException.java # BaseValidationException'dan extend
@@ -277,6 +316,7 @@ CommonCore'u güncellediğinizde:
 - [PAGINATION_USAGE.md](./PAGINATION_USAGE.md) - Pagination & Sorting kullanım kılavuzu
 - [INTERCEPTOR_USAGE.md](./INTERCEPTOR_USAGE.md) - Interceptor kullanım detayları
 - [RATE_LIMITING.md](./RATE_LIMITING.md) - Rate limiting detayları
+- [LOGGING_MONITORING_USAGE.md](./LOGGING_MONITORING_USAGE.md) - Logging & Monitoring detaylı kullanım kılavuzu
 
 ## Katkıda Bulunma
 

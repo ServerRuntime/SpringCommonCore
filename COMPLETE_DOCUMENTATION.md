@@ -17,6 +17,13 @@
      - [Basic Authentication](#basic-authentication)
      - [CORS Configuration](#cors-configuration)
    - [Spring Actuator](#spring-actuator)
+   - [Base Audit Fields](#base-audit-fields)
+   - [HTTP Client](#http-client)
+   - [Pagination & Sorting](#pagination--sorting)
+   - [Audit Logging](#audit-logging)
+   - [Advanced Logging & Structured Logging](#advanced-logging--structured-logging)
+   - [Performance Monitoring](#performance-monitoring)
+   - [Metrics Collection (Micrometer)](#metrics-collection-micrometer)
 4. [Yapılandırma Parametreleri](#yapılandırma-parametreleri)
 5. [Kullanım Örnekleri](#kullanım-örnekleri)
 6. [Proje Yapısı](#proje-yapısı)
@@ -39,6 +46,13 @@
 - ✅ **Bean Validation** (Jakarta Validation desteği)
 - ✅ **Custom Validators** (`@StrongPassword` gibi)
 - ✅ **Spring Actuator** (Monitoring ve health check)
+- ✅ **Base Audit Fields** (`BaseAuditFields` - Ortak audit alanları için embeddable entity)
+- ✅ **HTTP Client** (RestTemplate tabanlı HTTP client utility)
+- ✅ **Pagination & Sorting** (Sayfalama ve sıralama desteği)
+- ✅ **Audit Logging** (Entity değişiklik takibi ve kullanıcı aksiyon loglama)
+- ✅ **Advanced Logging** (Structured JSON logging, Request/Response body logging, Sensitive data masking)
+- ✅ **Performance Monitoring** (Memory, CPU, Execution time tracking)
+- ✅ **Metrics Collection** (Micrometer integration, Prometheus export)
 
 ---
 
@@ -1129,6 +1143,668 @@ curl http://localhost:8080/actuator/metrics/jvm.memory.used
 
 ---
 
+### Base Audit Fields
+
+CommonCore, tüm entity'lerde ortak olan audit alanlarını (`createdAt`, `updatedAt`, `createdBy`, `updatedBy`) tek bir embeddable sınıf içinde toplar. Bu sayede kod tekrarını önler ve tutarlılık sağlar.
+
+#### Yapı
+
+`BaseAuditFields` bir `@Embeddable` sınıfıdır ve şu alanları içerir:
+
+- `createdAt` (LocalDateTime, NOT NULL, updatable = false)
+- `updatedAt` (LocalDateTime, NOT NULL)
+- `createdBy` (String, nullable, max 100 karakter)
+- `updatedBy` (String, nullable, max 100 karakter)
+
+#### Kullanım
+
+**1. Entity'de Kullanım:**
+
+```java
+package com.example.domain;
+
+import io.commoncore.domain.BaseAuditFields;
+import jakarta.persistence.*;
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+@Entity
+@Table(name = "products")
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+public class Product {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(nullable = false)
+    private String name;
+
+    @Column(nullable = false)
+    private Double price;
+
+    // Embedded audit fields - Tek satırda tüm audit alanları!
+    @Embedded
+    private BaseAuditFields auditFields = new BaseAuditFields();
+
+    @PrePersist
+    protected void onCreate() {
+        auditFields.initialize();
+        // Spring Security'den kullanıcı adını almak için:
+        // auditFields.setCreatedByUser(getCurrentUsername());
+    }
+
+    @PreUpdate
+    protected void onUpdate() {
+        auditFields.update();
+        // auditFields.setUpdatedByUser(getCurrentUsername());
+    }
+}
+```
+
+**2. Spring Security Entegrasyonu (Opsiyonel):**
+
+```java
+@PrePersist
+protected void onCreate() {
+    auditFields.initialize();
+    
+    // Spring Security'den kullanıcı adını al
+    Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+    if (auth != null && auth.isAuthenticated() && !"anonymousUser".equals(auth.getName())) {
+        auditFields.setCreatedByUser(auth.getName());
+    }
+}
+
+@PreUpdate
+protected void onUpdate() {
+    auditFields.update();
+    
+    Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+    if (auth != null && auth.isAuthenticated() && !"anonymousUser".equals(auth.getName())) {
+        auditFields.setUpdatedByUser(auth.getName());
+    }
+}
+```
+
+**3. DTO'da Kullanım:**
+
+```java
+package com.example.dto;
+
+import lombok.Data;
+import java.time.LocalDateTime;
+
+@Data
+public class ProductDTO {
+    private Long id;
+    private String name;
+    private Double price;
+    
+    // Audit fields
+    private LocalDateTime createdAt;
+    private LocalDateTime updatedAt;
+    private String createdBy;
+    private String updatedBy;
+}
+```
+
+**4. Service'te Mapping:**
+
+```java
+@Service
+public class ProductService {
+    
+    private ProductDTO convertToDTO(Product product) {
+        ProductDTO dto = new ProductDTO();
+        dto.setId(product.getId());
+        dto.setName(product.getName());
+        dto.setPrice(product.getPrice());
+        
+        // Audit fields mapping
+        if (product.getAuditFields() != null) {
+            dto.setCreatedAt(product.getAuditFields().getCreatedAt());
+            dto.setUpdatedAt(product.getAuditFields().getUpdatedAt());
+            dto.setCreatedBy(product.getAuditFields().getCreatedBy());
+            dto.setUpdatedBy(product.getAuditFields().getUpdatedBy());
+        }
+        
+        return dto;
+    }
+}
+```
+
+#### Metodlar
+
+**`initialize()`**
+- Entity oluşturulduğunda çağrılır
+- `createdAt` ve `updatedAt` otomatik olarak şu anki zamanı set eder
+
+**`update()`**
+- Entity güncellendiğinde çağrılır
+- `updatedAt` otomatik olarak şu anki zamanı set eder
+
+**`setCreatedByUser(String username)`**
+- Oluşturan kullanıcıyı set eder
+
+**`setUpdatedByUser(String username)`**
+- Güncelleyen kullanıcıyı set eder
+
+#### Veritabanı Yapısı
+
+`BaseAuditFields` kullanıldığında, entity tablosunda şu kolonlar oluşturulur:
+
+```sql
+CREATE TABLE products (
+    id BIGINT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    price DOUBLE NOT NULL,
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL,
+    created_by VARCHAR(100),
+    updated_by VARCHAR(100)
+);
+```
+
+#### Avantajlar
+
+1. **Kod Tekrarını Önler**: Her entity'de aynı audit alanlarını yazmaya gerek yok
+2. **Tutarlılık**: Tüm entity'lerde aynı audit alan yapısı
+3. **Kolay Bakım**: Audit alanları değiştiğinde tek yerden güncellenir
+4. **Esneklik**: Her entity kendi `@PrePersist` ve `@PreUpdate` metodlarını tanımlayabilir
+5. **Spring Security Entegrasyonu**: Kullanıcı bilgisi otomatik set edilebilir
+
+#### Örnek: Birden Fazla Entity'de Kullanım
+
+```java
+// Product Entity
+@Entity
+public class Product {
+    @Embedded
+    private BaseAuditFields auditFields = new BaseAuditFields();
+    // ...
+}
+
+// Order Entity
+@Entity
+public class Order {
+    @Embedded
+    private BaseAuditFields auditFields = new BaseAuditFields();
+    // ...
+}
+
+// User Entity
+@Entity
+public class User {
+    @Embedded
+    private BaseAuditFields auditFields = new BaseAuditFields();
+    // ...
+}
+```
+
+Tüm entity'lerde aynı audit alan yapısı otomatik olarak oluşturulur!
+
+---
+
+### HTTP Client
+
+CommonCore, dış servislere HTTP istekleri yapmak için `RestTemplate` tabanlı bir HTTP client utility sağlar.
+
+#### Yapılandırma
+
+```properties
+# HTTP Client Configuration
+commoncore.http-client.enabled=true
+commoncore.http-client.connect-timeout=5000
+commoncore.http-client.read-timeout=10000
+commoncore.http-client.enable-logging=true
+commoncore.http-client.enable-retry=false
+commoncore.http-client.max-retry-attempts=3
+commoncore.http-client.retry-delay-ms=1000
+```
+
+#### Kullanım
+
+```java
+@Service
+@RequiredArgsConstructor
+public class ExternalService {
+    
+    private final HttpClientService httpClientService;
+    
+    public void callExternalApi() {
+        // GET request
+        String response = httpClientService.get("https://api.example.com/data", String.class);
+        
+        // POST request
+        Map<String, Object> requestBody = Map.of("key", "value");
+        String postResponse = httpClientService.post(
+            "https://api.example.com/endpoint", 
+            requestBody, 
+            String.class
+        );
+    }
+}
+```
+
+Detaylı kullanım için `HTTP_CLIENT_USAGE.md` dosyasına bakın.
+
+---
+
+### Pagination & Sorting
+
+CommonCore, sayfalama ve sıralama için `PageRequest` ve `PageResponse` DTO'ları sağlar.
+
+#### Kullanım
+
+```java
+@RestController
+public class ProductController {
+    
+    @GetMapping("/products")
+    public PageResponse<ProductDTO> getProducts(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size,
+            @RequestParam(required = false) String sortBy,
+            @RequestParam(defaultValue = "asc") String sortDirection) {
+        
+        PageRequest pageRequest = new PageRequest(page, size, sortBy, sortDirection);
+        return productService.getAllProducts(pageRequest);
+    }
+}
+```
+
+Detaylı kullanım için `PAGINATION_USAGE.md` dosyasına bakın.
+
+---
+
+### Audit Logging
+
+CommonCore, entity değişikliklerini ve kullanıcı aksiyonlarını otomatik olarak loglar.
+
+#### Yapılandırma
+
+```properties
+# Audit Logging Configuration
+commoncore.audit.enabled=true
+commoncore.audit.enable-entity-interceptor=true
+commoncore.audit.enable-user-action-logging=true
+commoncore.audit.enable-change-tracking=true
+commoncore.audit.retention-days=90
+```
+
+#### Kullanım
+
+**1. Entity'yi Auditable Yapma:**
+
+```java
+@Entity
+@Auditable("Product")
+public class Product {
+    // ...
+}
+```
+
+**2. Manuel Audit Log:**
+
+```java
+@Service
+public class ProductService {
+    
+    private final AuditService auditService;
+    
+    public Product createProduct(Product product) {
+        Product saved = productRepository.save(product);
+        
+        auditService.logUserAction(
+            AuditAction.CREATE,
+            "Product created: " + saved.getName(),
+            Map.of("productId", saved.getId().toString())
+        );
+        
+        return saved;
+    }
+}
+```
+
+Detaylı kullanım için `INTERCEPTOR_USAGE.md` ve audit logging dokümantasyonuna bakın.
+
+---
+
+### Advanced Logging & Structured Logging
+
+CommonCore, gelişmiş logging özellikleri sağlar: structured logging (JSON format), request/response body logging, header logging ve sensitive data masking.
+
+#### Özellikler
+
+1. **Structured Logging (JSON Format)**
+   - Log aggregation sistemleri (ELK, Splunk, etc.) ile entegrasyon için ideal
+   - JSON formatında tutarlı log yapısı
+   - Machine-readable log format
+
+2. **Request/Response Body Logging**
+   - HTTP request ve response body'lerini loglama
+   - Configurable body size limit
+   - Content-type bazlı filtreleme
+
+3. **Sensitive Data Masking**
+   - Password, token, credit card gibi hassas verileri otomatik maskeleme
+   - Configurable sensitive field listesi
+   - Custom mask pattern
+
+4. **Header Logging**
+   - HTTP header'larını loglama
+   - Authorization header'larını otomatik maskeleme
+
+#### Yapılandırma
+
+```properties
+# Logging Configuration
+commoncore.logging.structured-logging=false
+commoncore.logging.log-request-body=false
+commoncore.logging.log-response-body=false
+commoncore.logging.log-headers=false
+commoncore.logging.max-body-size=10000
+commoncore.logging.sensitive-fields=password,token,authorization,creditCard,cvv,ssn,secret
+commoncore.logging.mask-pattern=****
+commoncore.logging.loggable-content-types=application/json,application/xml
+```
+
+**Parametreler:**
+- `structured-logging`: JSON formatında loglama (default: `false`)
+- `log-request-body`: Request body'lerini logla (default: `false`)
+- `log-response-body`: Response body'lerini logla (default: `false`)
+- `log-headers`: Header'ları logla (default: `false`)
+- `max-body-size`: Loglanacak maksimum body boyutu (bytes) (default: `10000`)
+- `sensitive-fields`: Maskelenecek hassas alanlar (virgülle ayrılmış)
+- `mask-pattern`: Mask pattern (default: `****`)
+- `loggable-content-types`: Body loglaması yapılacak content type'lar
+
+#### Kullanım Örnekleri
+
+**1. Structured Logging Aktif Etme:**
+
+```properties
+commoncore.logging.structured-logging=true
+```
+
+**Örnek JSON Log Çıktısı:**
+
+```json
+{
+  "timestamp": "2024-01-11T15:30:00.123Z",
+  "level": "INFO",
+  "type": "request",
+  "requestId": "abc-123-def-456",
+  "method": "POST",
+  "uri": "/api/scores",
+  "remoteAddr": "127.0.0.1",
+  "headers": {
+    "authorization": "****",
+    "content-type": "application/json"
+  },
+  "body": {
+    "homeTeam": "Team A",
+    "awayTeam": "Team B",
+    "password": "****"
+  }
+}
+```
+
+**2. Request/Response Body Logging:**
+
+```properties
+commoncore.logging.log-request-body=true
+commoncore.logging.log-response-body=true
+```
+
+**3. Sensitive Data Masking:**
+
+```properties
+commoncore.logging.sensitive-fields=password,token,authorization,creditCard,cvv,ssn,secret
+commoncore.logging.mask-pattern=****
+```
+
+**Örnek Masked Log:**
+
+```json
+{
+  "body": {
+    "username": "admin",
+    "password": "****",
+    "token": "****",
+    "creditCard": "****"
+  }
+}
+```
+
+#### Avantajlar
+
+1. **Log Aggregation**: ELK Stack, Splunk gibi sistemlerle kolay entegrasyon
+2. **Security**: Hassas veriler otomatik maskelenir
+3. **Debugging**: Request/Response body'leri görüntülenebilir
+4. **Compliance**: GDPR, PCI-DSS gibi standartlara uyum
+
+---
+
+### Performance Monitoring
+
+CommonCore, uygulama performansını izlemek için detaylı monitoring özellikleri sağlar.
+
+#### Özellikler
+
+1. **Memory Monitoring**
+   - Her request için memory kullanımı takibi
+   - Heap memory usage tracking
+   - Memory leak detection için kullanılabilir
+
+2. **CPU Monitoring**
+   - Thread CPU time tracking
+   - CPU-intensive operation detection
+
+3. **Execution Time Tracking**
+   - Her request için execution time
+   - Slow query detection
+   - Performance bottleneck identification
+
+4. **Database Query Time Monitoring**
+   - Yavaş sorguları tespit etme
+   - Configurable slow query threshold
+
+#### Yapılandırma
+
+```properties
+# Monitoring Configuration
+commoncore.monitoring.enabled=true
+commoncore.monitoring.monitor-memory=true
+commoncore.monitoring.monitor-cpu=true
+commoncore.monitoring.monitor-db-query-time=true
+commoncore.monitoring.slow-query-threshold=1000
+```
+
+**Parametreler:**
+- `enabled`: Performance monitoring'i aktif/pasif yapar (default: `true`)
+- `monitor-memory`: Memory monitoring'i aktif/pasif yapar (default: `true`)
+- `monitor-cpu`: CPU monitoring'i aktif/pasif yapar (default: `true`)
+- `monitor-db-query-time`: Database query time monitoring'i aktif/pasif yapar (default: `true`)
+- `slow-query-threshold`: Yavaş sorgu eşiği (milliseconds) (default: `1000`)
+
+#### Kullanım Örnekleri
+
+**Performance Metrics Log Çıktısı:**
+
+```json
+{
+  "timestamp": "2024-01-11T15:30:00.456Z",
+  "method": "GET",
+  "uri": "/api/scores",
+  "status": 200,
+  "executionTime": 45,
+  "executionTimeUnit": "ms",
+  "memoryUsed": 2621440,
+  "memoryUsedUnit": "bytes",
+  "memoryUsedMB": 2.5,
+  "totalMemory": 536870912,
+  "maxMemory": 2147483648,
+  "cpuTimeUsed": 1000000,
+  "cpuTimeUsedUnit": "ns"
+}
+```
+
+**Slow Query Uyarısı:**
+
+```
+WARN - Slow request detected: GET /api/scores took 1200ms (threshold: 1000ms)
+```
+
+#### Avantajlar
+
+1. **Performance Optimization**: Yavaş endpoint'leri tespit etme
+2. **Resource Management**: Memory ve CPU kullanımını izleme
+3. **Capacity Planning**: Resource gereksinimlerini planlama
+4. **Troubleshooting**: Performance sorunlarını hızlıca tespit etme
+
+---
+
+### Metrics Collection (Micrometer)
+
+CommonCore, Micrometer entegrasyonu ile metrics toplama ve Prometheus export desteği sağlar.
+
+#### Özellikler
+
+1. **HTTP Request Metrics**
+   - Request counter (`http.requests.total`)
+   - Request duration timer (`http.request.duration`)
+   - Request memory usage gauge (`http.request.memory.used`)
+   - Request execution time gauge (`http.request.execution.time`)
+
+2. **Custom Business Metrics**
+   - Custom counter metrics
+   - Custom timer metrics
+   - Custom gauge metrics
+   - Business-specific metrics
+
+3. **Prometheus Export**
+   - Prometheus formatında metrics export
+   - `/actuator/prometheus` endpoint'i
+
+#### Yapılandırma
+
+```properties
+# Monitoring Configuration
+commoncore.monitoring.enable-metrics=true
+commoncore.monitoring.enable-prometheus=false
+
+# Actuator endpoints (Prometheus için)
+management.endpoints.web.exposure.include=health,info,metrics,prometheus
+```
+
+**Parametreler:**
+- `enable-metrics`: Micrometer metrics'i aktif/pasif yapar (default: `true`)
+- `enable-prometheus`: Prometheus export'u aktif/pasif yapar (default: `false`)
+
+#### Kullanım Örnekleri
+
+**1. Metrics Endpoint'lerini Kontrol Etme:**
+
+```bash
+# Tüm metrics listesi
+curl http://localhost:8080/actuator/metrics
+
+# HTTP request counter
+curl http://localhost:8080/actuator/metrics/http.requests.total
+
+# HTTP request duration
+curl http://localhost:8080/actuator/metrics/http.request.duration
+
+# Memory kullanımı
+curl http://localhost:8080/actuator/metrics/http.request.memory.used
+```
+
+**2. Custom Metrics Kullanımı:**
+
+```java
+@Service
+@RequiredArgsConstructor
+public class ScoreServiceImpl implements ScoreService {
+    
+    private final ScoreRepository scoreRepository;
+    private final CustomMetricsService customMetricsService;
+    
+    @Override
+    public ScoreDTO createScore(ScoreDTO scoreDTO) {
+        long startTime = System.currentTimeMillis();
+        
+        // ... score oluşturma işlemi ...
+        Score savedScore = scoreRepository.save(score);
+        
+        long duration = System.currentTimeMillis() - startTime;
+        
+        // Custom metrics kaydet
+        customMetricsService.recordTimer("score.creation.time", duration, TimeUnit.MILLISECONDS);
+        customMetricsService.incrementCounter("score.created", "status", scoreDTO.getStatus().name());
+        customMetricsService.recordBusinessMetric("total.scores", scoreRepository.count());
+        
+        return convertToDTO(savedScore);
+    }
+}
+```
+
+**3. Prometheus Export:**
+
+```properties
+commoncore.monitoring.enable-prometheus=true
+management.endpoints.web.exposure.include=health,info,metrics,prometheus
+```
+
+```bash
+curl http://localhost:8080/actuator/prometheus
+```
+
+**Örnek Prometheus Format:**
+
+```
+# HELP http_requests_total Total HTTP requests
+# TYPE http_requests_total counter
+http_requests_total{method="GET",status="200",uri="/api/scores"} 50.0
+http_requests_total{method="POST",status="201",uri="/api/scores"} 25.0
+
+# HELP http_request_duration_seconds HTTP request duration
+# TYPE http_request_duration_seconds summary
+http_request_duration_seconds{method="GET",uri="/api/scores",quantile="0.5"} 0.045
+http_request_duration_seconds{method="GET",uri="/api/scores",quantile="0.99"} 0.120
+```
+
+#### CustomMetricsService Metodları
+
+**`incrementCounter(String name, String... tags)`**
+- Counter metric'i artırır
+- Örnek: `customMetricsService.incrementCounter("score.created", "status", "FINISHED")`
+
+**`recordTimer(String name, long duration, TimeUnit unit, String... tags)`**
+- Timer metric kaydeder
+- Örnek: `customMetricsService.recordTimer("score.creation.time", 45, TimeUnit.MILLISECONDS)`
+
+**`recordGauge(String name, double value, String... tags)`**
+- Gauge metric kaydeder
+- Örnek: `customMetricsService.recordGauge("active.users", 150.0)`
+
+**`recordBusinessMetric(String metricName, double value, String... tags)`**
+- Business-specific metric kaydeder
+- Örnek: `customMetricsService.recordBusinessMetric("total.scores", 100.0)`
+
+#### Avantajlar
+
+1. **Observability**: Uygulama metriklerini görselleştirme
+2. **Alerting**: Prometheus + Grafana ile alerting
+3. **Performance Analysis**: Detaylı performans analizi
+4. **Capacity Planning**: Resource gereksinimlerini planlama
+
+---
+
 ## Yapılandırma Parametreleri
 
 ### Tüm Parametrelerin Özeti
@@ -1187,6 +1863,51 @@ commoncore.actuator.enabled=true
 commoncore.actuator.exposed-endpoints=health,info
 commoncore.actuator.base-path=/actuator
 commoncore.actuator.health-show-details=never
+
+# HTTP Client Configuration
+commoncore.http-client.enabled=true
+commoncore.http-client.connect-timeout=5000
+commoncore.http-client.read-timeout=10000
+commoncore.http-client.enable-logging=true
+commoncore.http-client.enable-retry=false
+commoncore.http-client.max-retry-attempts=3
+commoncore.http-client.retry-delay-ms=1000
+
+# Pagination Configuration
+commoncore.pagination.enabled=true
+commoncore.pagination.default-page-size=10
+commoncore.pagination.max-page-size=100
+commoncore.pagination.default-page=0
+
+# Audit Logging Configuration
+commoncore.audit.enabled=false
+commoncore.audit.enable-entity-interceptor=true
+commoncore.audit.enable-user-action-logging=true
+commoncore.audit.enable-change-tracking=true
+commoncore.audit.retention-days=90
+
+# Logging Configuration
+commoncore.logging.structured-logging=false
+commoncore.logging.log-request-body=false
+commoncore.logging.log-response-body=false
+commoncore.logging.log-headers=false
+commoncore.logging.max-body-size=10000
+commoncore.logging.sensitive-fields=password,token,authorization,creditCard,cvv,ssn,secret
+commoncore.logging.mask-pattern=****
+commoncore.logging.loggable-content-types=application/json,application/xml
+
+# Monitoring Configuration
+commoncore.monitoring.enabled=true
+commoncore.monitoring.monitor-memory=true
+commoncore.monitoring.monitor-cpu=true
+commoncore.monitoring.monitor-db-query-time=true
+commoncore.monitoring.slow-query-threshold=1000
+commoncore.monitoring.enable-metrics=true
+commoncore.monitoring.enable-prometheus=false
+
+# Base Audit Fields
+# Not: BaseAuditFields yapılandırma gerektirmez, doğrudan entity'lerde kullanılabilir
+# @Embedded annotation ile entity'lere eklenir
 ```
 
 ---
@@ -1313,7 +2034,10 @@ CommonCore/
 │   ├── advice/
 │   │   └── GlobalExceptionHandler.java      # Global exception handler
 │   ├── interceptor/
-│   │   ├── LoggingInterceptor.java          # Request/Response logging
+│   │   ├── LoggingInterceptor.java          # Basic request/response logging
+│   │   ├── AdvancedLoggingInterceptor.java   # Advanced logging (JSON, body, headers)
+│   │   ├── PerformanceMonitoringInterceptor.java # Performance monitoring
+│   │   ├── SensitiveDataMasker.java         # Sensitive data masking utility
 │   │   └── RateLimitingInterceptor.java     # Rate limiting
 │   ├── ratelimit/
 │   │   └── RateLimiter.java                 # Rate limiter implementation
@@ -1327,11 +2051,32 @@ CommonCore/
 │   │       └── BasicAuthConfig.java        # Basic Auth config
 │   ├── validation/
 │   │   └── StrongPassword.java               # Custom password validator
+│   ├── domain/
+│   │   └── BaseAuditFields.java              # Embedded audit fields
+│   ├── dto/
+│   │   ├── PageRequest.java                  # Pagination request DTO
+│   │   └── PageResponse.java                 # Pagination response DTO
+│   ├── httpclient/
+│   │   ├── HttpClientService.java            # HTTP client service
+│   │   └── HttpClientConfig.java             # HTTP client configuration
+│   ├── audit/
+│   │   ├── Auditable.java                    # Audit annotation
+│   │   ├── AuditAction.java                  # Audit action enum
+│   │   ├── AuditLog.java                     # Audit log entity
+│   │   ├── AuditLogRepository.java           # Audit log repository
+│   │   ├── AuditService.java                 # Audit service
+│   │   ├── AuditInterceptor.java             # Hibernate audit interceptor
+│   │   ├── AuditContext.java                 # Audit context utility
+│   │   └── AuditConfig.java                  # Audit configuration
+│   ├── monitoring/
+│   │   ├── MetricsConfig.java                # Micrometer metrics configuration
+│   │   └── CustomMetricsService.java         # Custom metrics service
 │   └── config/
 │       ├── CommonCoreAutoConfiguration.java # Auto-configuration
 │       ├── CommonCoreProperties.java       # Configuration properties
 │       ├── SecurityConfig.java             # Security configuration
-│       └── WebConfig.java                  # Web configuration
+│       ├── WebConfig.java                  # Web configuration
+│       └── ContentCachingFilter.java       # Request/Response body caching filter
 └── src/main/resources/
     └── application-commoncore.properties   # Default configuration
 ```
@@ -1417,6 +2162,67 @@ cd /path/to/CommonCore
 - `management.endpoints.web.exposure.include` yapılandırmasının doğru olduğundan emin olun
 - Actuator endpoint'lerinin exclude paths'te olduğundan emin olun (`/actuator/**`)
 
+### 7. Structured Logging Çalışmıyor
+
+**Sorun:** Loglar JSON formatında görünmüyor.
+
+**Kontrol Listesi:**
+- `commoncore.logging.structured-logging=true` olduğundan emin olun
+- Log output'unu kontrol edin (console veya log dosyası)
+- `AdvancedLoggingInterceptor` bean'inin yüklendiğinden emin olun
+- `ObjectMapper` bean'inin Spring tarafından sağlandığından emin olun
+
+### 8. Request Body Loglanmıyor
+
+**Sorun:** Request body'leri log'da görünmüyor.
+
+**Kontrol Listesi:**
+- `commoncore.logging.log-request-body=true` olduğundan emin olun
+- `ContentCachingFilter` bean'inin yüklendiğinden emin olun
+- Content-type'ın `loggable-content-types` listesinde olduğundan emin olun
+- Body boyutunun `max-body-size` limit'ini aşmadığından emin olun
+
+### 9. Sensitive Data Maskelenmiyor
+
+**Sorun:** Password, token gibi veriler log'da görünüyor.
+
+**Kontrol Listesi:**
+- `commoncore.logging.sensitive-fields` listesinde field adının olduğundan emin olun
+- Field adı case-insensitive kontrol edilir
+- JSON içindeki nested field'lar da maskelenir
+- `mask-pattern` değerinin doğru olduğundan emin olun
+
+### 10. Performance Monitoring Metrikleri Görünmüyor
+
+**Sorun:** Performance metrics log'da görünmüyor.
+
+**Kontrol Listesi:**
+- `commoncore.monitoring.enabled=true` olduğundan emin olun
+- `commoncore.monitoring.monitor-memory=true` veya `monitor-cpu=true` olduğundan emin olun
+- `PerformanceMonitoringInterceptor` bean'inin yüklendiğinden emin olun
+- Log seviyesinin INFO veya DEBUG olduğundan emin olun
+
+### 11. Metrics Görünmüyor
+
+**Sorun:** `/actuator/metrics` endpoint'inde custom metrics görünmüyor.
+
+**Kontrol Listesi:**
+- `commoncore.monitoring.enable-metrics=true` olduğundan emin olun
+- `/actuator/metrics` endpoint'inin expose edildiğinden emin olun
+- Uygulamaya birkaç request gönderin (metrics oluşması için)
+- `CustomMetricsService` bean'inin inject edildiğinden emin olun
+- `MeterRegistry` bean'inin Spring tarafından sağlandığından emin olun
+
+### 12. Prometheus Export Çalışmıyor
+
+**Sorun:** `/actuator/prometheus` endpoint'i çalışmıyor.
+
+**Kontrol Listesi:**
+- `commoncore.monitoring.enable-prometheus=true` olduğundan emin olun
+- `management.endpoints.web.exposure.include` listesinde `prometheus` olduğundan emin olun
+- `/actuator/prometheus` endpoint'ine erişim izni olduğundan emin olun
+- Micrometer Prometheus dependency'sinin (`micrometer-registry-prometheus`) eklendiğinden emin olun
+
 ---
 
 ## Versiyonlama
@@ -1442,8 +2248,11 @@ CommonCore'u güncellediğinizde:
 - [QUICK_START.md](./QUICK_START.md) - Hızlı başlangıç kılavuzu
 - [INTERCEPTOR_USAGE.md](./INTERCEPTOR_USAGE.md) - Interceptor kullanım detayları
 - [RATE_LIMITING.md](./RATE_LIMITING.md) - Rate limiting detayları
+- [HTTP_CLIENT_USAGE.md](./HTTP_CLIENT_USAGE.md) - HTTP Client kullanım kılavuzu
+- [PAGINATION_USAGE.md](./PAGINATION_USAGE.md) - Pagination & Sorting kullanım kılavuzu
+- [LOGGING_MONITORING_USAGE.md](./LOGGING_MONITORING_USAGE.md) - Logging & Monitoring detaylı kullanım kılavuzu
 - [README.md](./README.md) - Genel bakış
 
 ---
 
-**Son Güncelleme:** 2024-01-10
+**Son Güncelleme:** 2024-01-11
